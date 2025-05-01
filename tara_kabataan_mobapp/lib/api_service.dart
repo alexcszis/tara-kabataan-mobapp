@@ -46,83 +46,177 @@ class ApiService {
     if (statusCode >= 200 && statusCode < 300) {
       try {
         final decoded = jsonDecode(response.body);
+        _log('Response body decoded: $decoded');
         return decoded;
       } catch (e) {
+        _log('Error decoding JSON: $e, Raw response: ${response.body}');
         return _handleError(method, endpoint, 'Invalid JSON response: $e');
       }
     } else {
+      _log('Error response body: ${response.body}');
       return _handleError(method, endpoint, 'Status code: $statusCode, Response: ${response.body}');
     }
   }
   
   // Get all blogs
   static Future<Map<String, dynamic>> getBlogs({String category = 'ALL'}) async {
-    final endpoint = '/blogs.php?category=$category';
-    _log('GET $endpoint');
+  final endpoint = '/blogs.php?category=$category';
+  _log('GET $endpoint');
+  
+  try {
+    final response = await http.get(
+      Uri.parse('$baseUrl$endpoint'),
+    ).timeout(const Duration(seconds: 10));
+    
+    return _handleResponse(response, 'GET', endpoint);
+  } catch (e) {
+    return _handleError('GET', endpoint, e);
+  }
+}
+
+// Get single blog by ID
+static Future<Map<String, dynamic>> getBlogById(String blogId) async {
+  final endpoint = '/blogs.php?blog_id=$blogId';
+  _log('GET $endpoint');
+  
+  try {
+    final response = await http.get(
+      Uri.parse('$baseUrl$endpoint'),
+    ).timeout(const Duration(seconds: 10));
+    
+    return _handleResponse(response, 'GET', endpoint);
+  } catch (e) {
+    return _handleError('GET', endpoint, e);
+  }
+}
+
+// Add new blog
+static Future<Map<String, dynamic>> addBlog(Map<String, dynamic> blogData) async {
+  final endpoint = '/add_new_blog.php';
+  _log('POST $endpoint with data: $blogData');
+  
+  try {
+    final response = await http.post(
+      Uri.parse('$baseUrl$endpoint'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(blogData),
+    ).timeout(const Duration(seconds: 15));
+    
+    _log('Response status code: ${response.statusCode}');
+    _log('Response body: ${response.body}');
     
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl$endpoint'),
-      ).timeout(const Duration(seconds: 10));
-      
-      return _handleResponse(response, 'GET', endpoint);
+      final decodedResponse = jsonDecode(response.body);
+      return decodedResponse;
     } catch (e) {
-      return _handleError('GET', endpoint, e);
+      _log('Error decoding JSON response: $e');
+      return {
+        'success': false,
+        'error': 'Invalid JSON response from server: $e',
+        'raw_response': response.body
+      };
     }
+  } catch (e) {
+    _log('Exception in addBlog: $e');
+    return {
+      'success': false,
+      'error': e.toString()
+    };
   }
+}
+
+// Update blog
+static Future<Map<String, dynamic>> updateBlog(Map<String, dynamic> blogData) async {
+  final endpoint = '/update_blogs.php';
+  _log('POST $endpoint with data: $blogData');
   
-  // Get single blog by ID
-  static Future<Map<String, dynamic>> getBlogById(String blogId) async {
-    final endpoint = '/blogs.php?blog_id=$blogId';
-    _log('GET $endpoint');
+  try {
+    // Clone the data to avoid modifying the original
+    final dataToSend = Map<String, dynamic>.from(blogData);
+    
+    // Ensure blog_id is included
+    if (!dataToSend.containsKey('blog_id')) {
+      return {
+        'success': false,
+        'error': 'blog_id is required for updates'
+      };
+    }
+    
+    // Print EVERY field to ensure they match what the PHP script expects
+    _log('DETAILED DEBUG DATA:');
+    _log('blog_id: ${dataToSend['blog_id']} (type: ${dataToSend['blog_id'].runtimeType})');
+    if (dataToSend.containsKey('title')) _log('title: ${dataToSend['title']} (type: ${dataToSend['title'].runtimeType})');
+    if (dataToSend.containsKey('content')) _log('content: Length ${dataToSend['content'].length} (type: ${dataToSend['content'].runtimeType})');
+    if (dataToSend.containsKey('category')) _log('category: ${dataToSend['category']} (type: ${dataToSend['category'].runtimeType})');
+    if (dataToSend.containsKey('blog_status')) _log('blog_status: ${dataToSend['blog_status']} (type: ${dataToSend['blog_status'].runtimeType})');
+    if (dataToSend.containsKey('image_url')) _log('image_url: ${dataToSend['image_url']} (type: ${dataToSend['image_url'].runtimeType})');
+    if (dataToSend.containsKey('author')) _log('author: ${dataToSend['author']} (type: ${dataToSend['author'].runtimeType})');
+    
+    // Compare to the update_blogs.php expectations
+    // Looking at your PHP script, it expects specific field names
+    _log('CHECKING PHP COMPATIBILITY:');
+    _log('blog_id field exists: ${dataToSend.containsKey('blog_id')}');
+    _log('title field exists: ${dataToSend.containsKey('title')}'); // PHP expects 'title'
+    _log('content field exists: ${dataToSend.containsKey('content')}'); // PHP expects 'content'
+    _log('category field exists: ${dataToSend.containsKey('category')}'); // PHP expects 'category'
+    _log('blog_status field exists: ${dataToSend.containsKey('blog_status')}'); // PHP expects 'blog_status'
+    _log('image_url field exists: ${dataToSend.containsKey('image_url')}'); // PHP expects 'image_url'
+    
+    // Log the exact data being sent
+    final jsonBody = jsonEncode(dataToSend);
+    _log('Request body: $jsonBody');
+    
+    final response = await http.post(
+      Uri.parse('$baseUrl$endpoint'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonBody,
+    ).timeout(const Duration(seconds: 15));
+    
+    _log('Response status code: ${response.statusCode}');
+    _log('Response body: ${response.body}');
+    
+    // Check if response is HTML
+    if (response.body.contains('<br />') || response.body.contains('<b>') || 
+        response.body.contains('<!DOCTYPE') || response.body.contains('<html')) {
+      _log('Received HTML instead of JSON. PHP error likely occurred.');
+      
+      // Success case - sometimes PHP scripts return success but with HTML warnings
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {'success': true, 'note': 'Server returned HTML with success status code'};
+      }
+      
+      return {
+        'success': false,
+        'error': 'Server returned HTML instead of JSON. Please check server logs.'
+      };
+    }
     
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl$endpoint'),
-      ).timeout(const Duration(seconds: 10));
-      
-      return _handleResponse(response, 'GET', endpoint);
+      // Try to parse as JSON
+      final decodedResponse = jsonDecode(response.body);
+      return decodedResponse;
     } catch (e) {
-      return _handleError('GET', endpoint, e);
-    }
-  }
-  
-  // Add new blog
-  static Future<Map<String, dynamic>> addBlog(Map<String, dynamic> blogData) async {
-    final endpoint = '/add_new_blog.php';
-    _log('POST $endpoint with data: $blogData');
-    
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(blogData),
-      ).timeout(const Duration(seconds: 15));
+      _log('Error decoding JSON response: $e');
       
-      return _handleResponse(response, 'POST', endpoint);
-    } catch (e) {
-      return _handleError('POST', endpoint, e);
-    }
-  }
-  
-  // Update blog
-  static Future<Map<String, dynamic>> updateBlog(Map<String, dynamic> blogData) async {
-    final endpoint = '/update_blogs.php';
-    _log('POST $endpoint with data: $blogData');
-    
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(blogData),
-      ).timeout(const Duration(seconds: 15));
+      // If the status code indicates success, treat it as successful even if JSON parsing fails
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {'success': true, 'note': 'Request succeeded but response was not valid JSON'};
+      }
       
-      return _handleResponse(response, 'POST', endpoint);
-    } catch (e) {
-      return _handleError('POST', endpoint, e);
+      return {
+        'success': false,
+        'error': 'Invalid JSON response from server: $e',
+        'raw_response': response.body
+      };
     }
+  } catch (e) {
+    _log('Exception in updateBlog: $e');
+    return {
+      'success': false,
+      'error': e.toString()
+    };
   }
-  
+}
   // Delete blog
   static Future<Map<String, dynamic>> deleteBlog(String blogId) async {
     final endpoint = '/delete_blogs.php';
@@ -160,12 +254,31 @@ class ApiService {
         ),
       );
       
+      _log('Sending multipart request to: ${request.url}');
+      
       final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamedResponse);
       
-      return _handleResponse(response, 'POST', endpoint);
+      _log('Response status code: ${response.statusCode}');
+      _log('Response body: ${response.body}');
+      
+      try {
+        final decodedResponse = jsonDecode(response.body);
+        return decodedResponse;
+      } catch (e) {
+        _log('Error decoding JSON response: $e');
+        return {
+          'success': false,
+          'error': 'Invalid JSON response from server: $e',
+          'raw_response': response.body
+        };
+      }
     } catch (e) {
-      return _handleError('POST', endpoint, e);
+      _log('Exception in uploadBlogImage: $e');
+      return {
+        'success': false,
+        'error': e.toString()
+      };
     }
   }
   

@@ -27,6 +27,10 @@ class BlogsPage extends StatefulWidget {
 
 class _BlogsPageState extends State<BlogsPage> {
   List<Map<String, dynamic>>? blogs;
+  List<Map<String, dynamic>>? users;
+  
+ String authorInput = '';
+  String? selectedBlogStatus = 'PUBLISHED';
   bool isLoading = true;
   bool showAddForm = false;
   Map<String, dynamic>? blogToEdit;
@@ -46,8 +50,25 @@ class _BlogsPageState extends State<BlogsPage> {
   void initState() {
     super.initState();
     _loadBlogs();
+    _loadUsers();
+    
   }
-
+Future<void> _loadUsers() async {
+  try {
+    // Just hardcoding user ID 1 as default for now since we don't have a user list API
+    setState(() {
+  authorInput = '';
+});
+    
+    // In a real implementation, you'd fetch users from an API
+    // final response = await ApiService.getUsers();
+    // setState(() {
+    //   users = List<Map<String, dynamic>>.from(response['users']);
+    // });
+  } catch (e) {
+    _showErrorSnackBar('Error loading users: $e');
+  }
+}
   @override
   void dispose() {
     _titleController.dispose();
@@ -78,29 +99,32 @@ class _BlogsPageState extends State<BlogsPage> {
 
   // Show add/edit form
   void _showAddEditForm({Map<String, dynamic>? blog}) {
-    setState(() {
-      showAddForm = true;
-      blogToEdit = blog;
-      
-      if (blog != null) {
-        // Populate form with blog data
-        _titleController.text = blog['title'] ?? '';
-        _contentController.text = blog['content'] ?? '';
-        _categoryController.text = blog['category'] ?? '';
-        _imageUrl = blog['image_url'];
-      } else {
-        // Clear form for new blog
-        _titleController.clear();
-        _contentController.clear();
-        _categoryController.clear();
-        _imageUrl = null;
-      }
-      
-      _imageBytes = null;
-      _imageFileName = null;
-    });
-  }
-
+  setState(() {
+    showAddForm = true;
+    blogToEdit = blog;
+    
+    if (blog != null) {
+      // Populate form with blog data
+      _titleController.text = blog['title'] ?? '';
+      _contentController.text = blog['content'] ?? '';
+      _categoryController.text = blog['category'] ?? '';
+      _imageUrl = blog['image_url'];
+      authorInput = blog['author'] ?? '';
+      selectedBlogStatus = blog['blog_status'] ?? 'PUBLISHED';
+    } else {
+      // Clear form for new blog
+      _titleController.clear();
+      _contentController.clear();
+      _categoryController.clear();
+      _imageUrl = null;
+      authorInput = ''; // Changed from selectedAuthorId = '1'
+      selectedBlogStatus = 'PUBLISHED';
+    }
+    
+    _imageBytes = null;
+    _imageFileName = null;
+  });
+}
   // Cancel add/edit form
   void _cancelAddEdit() {
     setState(() {
@@ -153,78 +177,129 @@ Future<void> _pickImage() async {
 }
 
   // Save blog (add or update)
-  Future<void> _saveBlog() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
+// Replace your current _saveBlog method with this one
+Future<void> _saveBlog() async {
+  if (!_formKey.currentState!.validate()) {
+    return;
+  }
+
+  print('Starting to save blog'); // Debug log
+  setState(() {
+    isLoading = true;
+  });
+
+  try {
+    // Upload image if selected
+    String? imageUrl = _imageUrl;
+    
+    if (_imageBytes != null && _imageFileName != null) {
+      print('Uploading image: $_imageFileName (${_imageBytes!.length} bytes)'); // Debug log
+      
+      try {
+        final uploadResponse = await ApiService.uploadBlogImage(_imageBytes!, _imageFileName!);
+        print('Image upload response: $uploadResponse'); // Debug log
+        
+        if (uploadResponse['success'] == true) {
+          imageUrl = uploadResponse['image_url'];
+          print('Image uploaded successfully: $imageUrl'); // Debug log
+        } else {
+          print('Image upload failed: ${uploadResponse['error']}'); // Debug log
+          throw Exception('Failed to upload image: ${uploadResponse['error']}');
+        }
+      } catch (e) {
+        print('Exception during image upload: $e'); // Debug log
+        _showErrorSnackBar('Error uploading image: $e');
+        setState(() {
+          isLoading = false;
+        });
+        return; // Exit the method if image upload fails
+      }
+    } else {
+      print('No new image to upload, using existing image: $imageUrl'); // Debug log
     }
 
-    setState(() {
-      isLoading = true;
-    });
+    // Prepare blog data with fixed values
+    final blogData = {
+      'title': _titleController.text,
+      'content': _contentController.text,
+      'category': _categoryController.text,
+      'blog_status': selectedBlogStatus,
+      'author': authorInput, // Using text input instead of ID
+    };
 
-    try {
-      // Upload image if selected
-      String? imageUrl = _imageUrl;
-      // In your blog or event form
-if (_imageBytes != null && _imageFileName != null) {
-  final uploadResponse = await ApiService.uploadBlogImage(_imageBytes!, _imageFileName!);
-  if (uploadResponse['success'] == true) {
-    imageUrl = uploadResponse['image_url'];
-  } else {
-    throw Exception('Failed to upload image');
-  }
-}
+    // Only include image_url if it's not null
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      blogData['image_url'] = imageUrl;
+    }
 
-      // Prepare blog data
-      final blogData = {
-        'title': _titleController.text,
-        'content': _contentController.text,
-        'category': _categoryController.text,
-        'blog_status': 'PUBLISHED', // Default status
-        'author': '1', // Default author ID
-      };
+    print('Blog data to save: $blogData'); // Debug log
 
-      if (imageUrl != null) {
-        blogData['image_url'] = imageUrl;
-      }
-
-      // Add or update blog
-      if (blogToEdit != null) {
-        // Update existing blog
-        blogData['blog_id'] = blogToEdit!['blog_id'];
+    // Add or update blog
+    if (blogToEdit != null) {
+      // Ensure we have the correct blog_id format
+      final String blogId = blogToEdit!['blog_id'];
+      
+      // Log the exact blog_id being used
+      print('Updating blog with ID: $blogId'); // Debug log
+      blogData['blog_id'] = blogId;
+      
+      try {
         final updateResponse = await ApiService.updateBlog(blogData);
+        print('Update response: $updateResponse'); // Debug log
+        
         if (updateResponse['success'] == true) {
           _showSuccessSnackBar('Blog updated successfully');
+          // Reset form and reload blogs
+          setState(() {
+            showAddForm = false;
+            blogToEdit = null;
+            _imageBytes = null;
+            _imageFileName = null;
+          });
+          
+          await _loadBlogs();
         } else {
-          throw Exception('Failed to update blog');
+          throw Exception('Failed to update blog: ${updateResponse['error'] ?? 'Unknown error'}');
         }
-      } else {
-        // Add new blog
+      } catch (e) {
+        print('Exception during blog update: $e'); // Debug log
+        _showErrorSnackBar('Error updating blog: $e');
+      }
+    } else {
+      // Add new blog logic remains the same
+      print('Adding new blog'); // Debug log
+      try {
         final addResponse = await ApiService.addBlog(blogData);
+        print('Add response: $addResponse'); // Debug log
+        
         if (addResponse['success'] == true) {
           _showSuccessSnackBar('Blog added successfully');
+          // Reset form and reload blogs
+          setState(() {
+            showAddForm = false;
+            blogToEdit = null;
+            _imageBytes = null;
+            _imageFileName = null;
+          });
+          
+          await _loadBlogs();
         } else {
-          throw Exception('Failed to add blog');
+          throw Exception('Failed to add blog: ${addResponse['error'] ?? 'Unknown error'}');
         }
+      } catch (e) {
+        print('Exception during blog addition: $e'); // Debug log
+        _showErrorSnackBar('Error adding blog: $e');
       }
-
-      // Reset form and reload blogs
-      setState(() {
-        showAddForm = false;
-        blogToEdit = null;
-        _imageBytes = null;
-        _imageFileName = null;
-      });
-      
-      await _loadBlogs();
-    } catch (e) {
-      _showErrorSnackBar('Error saving blog: $e');
-    } finally {
-      setState(() {
-        isLoading = false;
-      });
     }
+  } catch (e) {
+    print('General exception in _saveBlog: $e'); // Debug log
+    _showErrorSnackBar('Error saving blog: $e');
+  } finally {
+    setState(() {
+      isLoading = false;
+    });
   }
+}
 
   // Delete blog
   Future<void> _deleteBlog(String blogId) async {
@@ -738,95 +813,147 @@ if (_imageBytes != null && _imageFileName != null) {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          TextFormField(
-                            controller: _titleController,
-                            decoration: const InputDecoration(
-                              labelText: 'Title',
-                              border: OutlineInputBorder(),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter a title';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 15),
-                          TextFormField(
-                            controller: _categoryController,
-                            decoration: const InputDecoration(
-                              labelText: 'Category',
-                              border: OutlineInputBorder(),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter a category';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 15),
-                          TextFormField(
-                            controller: _contentController,
-                            decoration: const InputDecoration(
-                              labelText: 'Content',
-                              border: OutlineInputBorder(),
-                              alignLabelWithHint: true,
-                            ),
-                            maxLines: 5,
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter content';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 20),
-                          Row(
-                            children: [
-                              const Text('Image:', style: TextStyle(fontSize: 16)),
-                              const SizedBox(width: 10),
-                              ElevatedButton.icon(
-                                onPressed: _pickImage,
-                                icon: const Icon(Icons.image),
-                                label: const Text('Choose Image'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF00A3FF),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          if (_imageBytes != null)
-                            Container(
-                              height: 150,
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                border: Border.all(color: Colors.grey),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Image.memory(_imageBytes!, fit: BoxFit.cover),
-                            )
-                          else if (_imageUrl != null)
-                            Container(
-                              height: 150,
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                border: Border.all(color: Colors.grey),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Image.network(
-                                '${ApiService.baseUrl.replaceAll('/api', '')}/uploads/blogs-images/${_imageUrl!.toString().split('/').last}',
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return Container(
-                                    color: Colors.grey[300],
-                                    alignment: Alignment.center,
-                                    child: const Text('Image not available'),
-                                  );
-                                },
-                              ),
-                            ),
+                      TextFormField(
+  controller: _titleController,
+  decoration: const InputDecoration(
+    labelText: 'Title',
+    border: OutlineInputBorder(),
+  ),
+  validator: (value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter a title';
+    }
+    return null;
+  },
+),
+const SizedBox(height: 15),
+TextFormField(
+  controller: _categoryController,
+  decoration: const InputDecoration(
+    labelText: 'Category',
+    border: OutlineInputBorder(),
+  ),
+  validator: (value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter a category';
+    }
+    return null;
+  },
+),
+const SizedBox(height: 15),
+// Author field
+TextFormField(
+  initialValue: authorInput,
+  decoration: const InputDecoration(
+    labelText: 'Author',
+    border: OutlineInputBorder(),
+  ),
+  onChanged: (value) {
+    setState(() {
+      authorInput = value;
+    });
+  },
+  validator: (value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter an author';
+    }
+    return null;
+  },
+),
+const SizedBox(height: 15),
+// Blog status field
+DropdownButtonFormField<String>(
+  value: selectedBlogStatus ?? 'PUBLISHED',
+  decoration: const InputDecoration(
+    labelText: 'Status',
+    border: OutlineInputBorder(),
+  ),
+  items: const [
+    DropdownMenuItem<String>(
+      value: 'DRAFT',
+      child: Text('Draft'),
+    ),
+    DropdownMenuItem<String>(
+      value: 'PUBLISHED',
+      child: Text('Published'),
+    ),
+    DropdownMenuItem<String>(
+      value: 'PINNED',
+      child: Text('Pinned'),
+    ),
+    DropdownMenuItem<String>(
+      value: 'ARCHIVED',
+      child: Text('Archived'),
+    ),
+  ],
+  onChanged: (value) {
+    setState(() {
+      selectedBlogStatus = value!;
+    });
+  },
+),
+const SizedBox(height: 15),
+TextFormField(
+  controller: _contentController,
+  decoration: const InputDecoration(
+    labelText: 'Content',
+    border: OutlineInputBorder(),
+    alignLabelWithHint: true,
+  ),
+  maxLines: 5,
+  validator: (value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter content';
+    }
+    return null;
+  },
+),
+const SizedBox(height: 20),
+Row(
+  children: [
+    const Text('Image:', style: TextStyle(fontSize: 16)),
+    const SizedBox(width: 10),
+    ElevatedButton.icon(
+      onPressed: _pickImage,
+      icon: const Icon(Icons.image),
+      label: const Text('Choose Image'),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF00A3FF),
+      ),
+    ),
+  ],
+),
+const SizedBox(height: 10),
+if (_imageBytes != null)
+  Container(
+    height: 150,
+    width: double.infinity,
+    decoration: BoxDecoration(
+      border: Border.all(color: Colors.grey),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Image.memory(_imageBytes!, fit: BoxFit.cover),
+  )
+else if (_imageUrl != null)
+  Container(
+    height: 150,
+    width: double.infinity,
+    decoration: BoxDecoration(
+      border: Border.all(color: Colors.grey),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Image.network(
+      '${ApiService.baseUrl.replaceAll('/api', '')}/uploads/blogs-images/${_imageUrl!.toString().split('/').last}',
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Container(
+          color: Colors.grey[300],
+          alignment: Alignment.center,
+          child: const Text('Image not available'),
+        );
+      },
+    ),
+  ),
                           const SizedBox(height: 30),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.end,
@@ -920,4 +1047,43 @@ class _SidebarButton extends StatelessWidget {
       ),
     );
   }
+}
+
+void _debugBlogData(BuildContext context, Map<String, dynamic> blog) {
+  showDialog(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Debug Blog Data'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('ID: ${blog['blog_id']}'),
+              const SizedBox(height: 8),
+              Text('Title: ${blog['title']}'),
+              const SizedBox(height: 8),
+              Text('Category: ${blog['category']}'),
+              const SizedBox(height: 8),
+              Text('Status: ${blog['blog_status']}'),
+              const SizedBox(height: 8),
+              Text('Author: ${blog['author']}'),
+              const SizedBox(height: 8),
+              Text('Image URL: ${blog['image_url']}'),
+              const SizedBox(height: 8),
+              const Text('Type information:'),
+              Text('ID type: ${blog['blog_id'].runtimeType}'),
+              Text('Title type: ${blog['title'].runtimeType}'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
 }
